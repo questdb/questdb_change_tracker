@@ -55,7 +55,13 @@ The script provides the following output:
 - Notifications of structure version changes.
 - Aggregated results including transaction IDs, total rows, and specified column statistics (first, last, min, max, avg).
 
-## Example Output
+## Example
+### Example command line
+```bash
+python change_tracker.py --table_name smart_meters --columns frequency,voltage --row_threshold 100 --check_interval 30 --timestamp_column timestamp
+```
+
+### Example Output
 ```
 Starting from transaction ID: 125 with structure version: 1
 Structure version changed from 1 to 2 on transaction 127
