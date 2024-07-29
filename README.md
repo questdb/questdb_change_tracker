@@ -71,6 +71,8 @@ frequency_first, voltage_first, frequency_last, voltage_last, frequency_min, vol
 
 ## Materialize View
 
+The Materialize View script allows monitoring one or more tables, and when the specified row thresholds are met, it executes a SQL template provided by the user. The script replaces the `{timestamp_txn_filter}` placeholder in the SQL template with the appropriate timestamp filters based on the transactions. Note that this script is not production-ready as the state is reset upon restart.
+
 ### Usage
 ```sh
 python materialize_view.py --table_names <table_names> --thresholds <thresholds> --sql_template_path <sql_template_path> [--check_interval <check_interval>] --timestamp_columns <timestamp_columns> [--dbname <dbname>] [--user <user>] [--host <host>] [--port <port>] [--password <password>]
