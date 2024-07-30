@@ -2,8 +2,9 @@ import psycopg2
 import time
 import sys
 import argparse
+import base64
 
-def main(table_names, thresholds, sql_template_path, check_interval, timestamp_columns, dbname='qdb', user='admin', host='127.0.0.1', port=8812, password='quest'):
+def main(table_names, thresholds, sql_template_path, check_interval, timestamp_columns, dbname='qdb', user='admin', host='127.0.0.1', port=8812, password='quest', tracking_table=None, tracking_id=None):
     conn = psycopg2.connect(
         dbname=dbname,
         user=user,
@@ -15,18 +16,58 @@ def main(table_names, thresholds, sql_template_path, check_interval, timestamp_c
     
     table_info = {}
     
-    # Initial query to get the latest transaction ID and structure version for each table
-    for table in table_names:
-        cur.execute(f"SELECT sequencerTxn, structureVersion FROM wal_transactions('{table}') ORDER BY sequencerTxn DESC LIMIT 1")
-        latest_txn_id, latest_structure_version = cur.fetchone()
-        table_info[table] = {
-            'latest_txn_id': latest_txn_id,
-            'latest_structure_version': latest_structure_version,
-            'total_new_rows': 0,
-            'min_timestamp': None,
-            'max_timestamp': None
-        }
-        print(f"Starting from transaction ID: {latest_txn_id} with structure version: {latest_structure_version} for table {table}")
+    if tracking_table and tracking_id:
+        # Create tracking table if it does not exist
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {tracking_table} (
+                timestamp TIMESTAMP,
+                trackingId SYMBOL,
+                tableName SYMBOL,
+                sequencerTxn LONG,
+                template64 VARCHAR
+            ) timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(timestamp, trackingId, tableName);
+        """)
+        conn.commit()
+        
+        # Get the latest transaction ID from tracking table
+        cur.execute(f"""
+            SELECT tableName, sequencerTxn
+            FROM {tracking_table}
+            WHERE trackingId = '{tracking_id}'
+            LATEST ON timestamp
+            PARTITION BY tableName;
+        """)
+        latest_transactions = cur.fetchall()
+        
+        for table in table_names:
+            # Initialize with the latest transaction from tracking table if available
+            latest_txn_id = next((txn[1] for txn in latest_transactions if txn[0] == table), None)
+            if latest_txn_id:
+                cur.execute(f"SELECT structureVersion FROM wal_transactions('{table}') WHERE sequencerTxn = {latest_txn_id} LIMIT 1")
+                latest_structure_version = cur.fetchone()[0]
+            else:
+                cur.execute(f"SELECT sequencerTxn, structureVersion FROM wal_transactions('{table}') ORDER BY sequencerTxn DESC LIMIT 1")
+                latest_txn_id, latest_structure_version = cur.fetchone()
+            table_info[table] = {
+                'latest_txn_id': latest_txn_id,
+                'latest_structure_version': latest_structure_version,
+                'total_new_rows': 0,
+                'min_timestamp': None,
+                'max_timestamp': None
+            }
+            print(f"Starting from transaction ID: {latest_txn_id} with structure version: {latest_structure_version} for table {table}")
+    else:
+        for table in table_names:
+            cur.execute(f"SELECT sequencerTxn, structureVersion FROM wal_transactions('{table}') ORDER BY sequencerTxn DESC LIMIT 1")
+            latest_txn_id, latest_structure_version = cur.fetchone()
+            table_info[table] = {
+                'latest_txn_id': latest_txn_id,
+                'latest_structure_version': latest_structure_version,
+                'total_new_rows': 0,
+                'min_timestamp': None,
+                'max_timestamp': None
+            }
+            print(f"Starting from transaction ID: {latest_txn_id} with structure version: {latest_structure_version} for table {table}")
 
     while True:
         time.sleep(check_interval)
@@ -85,6 +126,17 @@ def main(table_names, thresholds, sql_template_path, check_interval, timestamp_c
             conn.commit()
             print("Executed query:")
             print(sql_query)
+
+            # Update tracking table with the latest transactions
+            if tracking_table and tracking_id:
+                timestamp_now = time.strftime('%Y-%m-%dT%H:%M:%S')
+                template64 = base64.b64encode(sql_template.encode()).decode()
+                for table in table_names:
+                    cur.execute(f"""
+                        INSERT INTO {tracking_table} (timestamp, trackingId, tableName, sequencerTxn, template64)
+                        VALUES ('{timestamp_now}', '{tracking_id}', '{table}', {table_info[table]['latest_txn_id']}, '{template64}')
+                    """)
+                conn.commit()
         
         # Update the latest transaction IDs
         for table in table_names:
@@ -106,6 +158,8 @@ if __name__ == "__main__":
     parser.add_argument('--host', default='127.0.0.1', help='The database host.')
     parser.add_argument('--port', type=int, default=8812, help='The database port.')
     parser.add_argument('--password', default='quest', help='The database password.')
+    parser.add_argument('--tracking_table', help='The name of the tracking table.')
+    parser.add_argument('--tracking_id', help='The tracking ID for this run.')
 
     args = parser.parse_args()
 
@@ -113,5 +167,5 @@ if __name__ == "__main__":
     thresholds = list(map(int, args.thresholds.split(',')))
     timestamp_columns = args.timestamp_columns.split(',')
 
-    main(table_names, thresholds, args.sql_template_path, args.check_interval, timestamp_columns, args.dbname, args.user, args.host, args.port, args.password)
+    main(table_names, thresholds, args.sql_template_path, args.check_interval, timestamp_columns, args.dbname, args.user, args.host, args.port, args.password, args.tracking_table, args.tracking_id)
 
