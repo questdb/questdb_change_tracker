@@ -9,6 +9,7 @@ QuestDB Change Tracker is a Python script designed to monitor and aggregate chan
 - Detects and reports structural changes in the table.
 - Outputs aggregated results to stdout.
 - Inserts data into a materialized view based on a user-defined SQL template.
+- Tracks processing status using a specified QuestDB table to ensure continuity between script runs.
 
 ## Installation
 1. Clone the repository:
@@ -32,12 +33,12 @@ QuestDB Change Tracker is a Python script designed to monitor and aggregate chan
 
 ### Usage
 ```sh
-python change_tracker.py --table_name <table_name> --columns <columns> [--row_threshold <row_threshold>] [--check_interval <check_interval>] [--timestamp_column <timestamp_column>] [--dbname <dbname>] [--user <user>] [--host <host>] [--port <port>] [--password <password>]
+python change_tracker.py --table_name <table_name> --columns <columns> [--row_threshold <row_threshold>] [--check_interval <check_interval>] [--timestamp_column <timestamp_column>] [--tracking_table <tracking_table>] [--tracking_id <tracking_id>] [--dbname <dbname>] [--user <user>] [--host <host>] [--port <port>] [--password <password>]
 ```
 
 ### Example
 ```sh
-python change_tracker.py --table_name smart_meters --columns frequency,voltage --row_threshold 100 --check_interval 30 --timestamp_column timestamp
+python change_tracker.py --table_name smart_meters --columns frequency,voltage --row_threshold 100 --check_interval 30 --timestamp_column timestamp --tracking_table materialize_tracker --tracking_id meter_logger
 ```
 
 ### Parameters
@@ -46,6 +47,8 @@ python change_tracker.py --table_name smart_meters --columns frequency,voltage -
 - `--row_threshold`: The number of rows to trigger aggregation (default: 1000).
 - `--check_interval`: The interval (in seconds) to check for new transactions (default: 30).
 - `--timestamp_column`: The name of the timestamp column (default: 'timestamp').
+- `--tracking_table`: The name of the tracking table (optional).
+- `--tracking_id`: The tracking ID for this run (optional).
 - `--dbname`: The name of the database (default: 'qdb').
 - `--user`: The database user (default: 'admin').
 - `--host`: The database host (default: '127.0.0.1').
@@ -75,12 +78,12 @@ The Materialize View script allows monitoring one or more tables, and when the s
 
 ### Usage
 ```sh
-python materialize_view.py --table_names <table_names> --thresholds <thresholds> --sql_template_path <sql_template_path> [--check_interval <check_interval>] --timestamp_columns <timestamp_columns> [--dbname <dbname>] [--user <user>] [--host <host>] [--port <port>] [--password <password>]
+python materialize_view.py --table_names <table_names> --thresholds <thresholds> --sql_template_path <sql_template_path> [--check_interval <check_interval>] --timestamp_columns <timestamp_columns> [--tracking_table <tracking_table>] [--tracking_id <tracking_id>] [--dbname <dbname>] [--user <user>] [--host <host>] [--port <port>] [--password <password>]
 ```
 
 ### Example
 ```sh
-python materialize_view.py --table_names smart_meters,trades --thresholds 100,50 --sql_template_path materialize.sql --check_interval 30 --timestamp_columns smart_meters.timestamp,trades.timestamp
+python materialize_view.py --table_names smart_meters,trades --thresholds 100,50 --sql_template_path materialize.sql --check_interval 5 --timestamp_columns smart_meters.timestamp,trades.timestamp --tracking_table materialize_tracker --tracking_id meters_and_trades
 ```
 
 ### Parameters
@@ -89,6 +92,8 @@ python materialize_view.py --table_names smart_meters,trades --thresholds 100,50
 - `--sql_template_path`: Path to the file containing the SQL template (required).
 - `--check_interval`: The interval (in seconds) to check for new transactions (default: 30).
 - `--timestamp_columns`: Comma-separated list of timestamp columns corresponding to each table (format: `table_name.column_name`) (required).
+- `--tracking_table`: The name of the tracking table (optional).
+- `--tracking_id`: The tracking ID for this run (optional).
 - `--dbname`: The name of the database (default: 'qdb').
 - `--user`: The database user (default: 'admin').
 - `--host`: The database host (default: '127.0.0.1').
@@ -113,12 +118,12 @@ SAMPLE BY 10m;
 
 ### Example Command Line
 ```bash
-python materialize_view.py --table_names smart_meters,trades --thresholds 100,50 --sql_template_path materialize.sql --check_interval 30 --timestamp_columns smart_meters.timestamp,trades.timestamp
+python materialize_view.py --table_names smart_meters,trades --thresholds 100,50 --sql_template_path materialize.sql --check_interval 5 --timestamp_columns smart_meters.timestamp,trades.timestamp --tracking_table materialize_tracker --tracking_id meters_and_trades
 ```
 
 ### Example Output
 ```
-python materialize_view.py --table_names smart_meters,trades --thresholds 100,50 --sql_template_path materialize.sql --check_interval 30 --timestamp_columns smart_meters.timestamp,trades.timestamp
+python materialize_view.py --table_names smart_meters,trades --thresholds 100,50 --sql_template_path materialize.sql --check_interval 5 --timestamp_columns smart_meters.timestamp,trades.timestamp --tracking_table materialize_tracker --tracking_id meters_and_trades
 
 Starting from transaction ID: 308 with structure version: 3 for table smart_meters
 Starting from transaction ID: 3728 with structure version: 0 for table trades
