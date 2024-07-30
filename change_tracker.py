@@ -3,7 +3,7 @@ import time
 import sys
 import argparse
 
-def main(table_name, columns, dbname='qdb', user='admin', host='127.0.0.1', port=8812, password='quest', row_threshold=1000, check_interval=30, timestamp_column='timestamp'):
+def main(table_name, columns, dbname='qdb', user='admin', host='127.0.0.1', port=8812, password='quest', row_threshold=1000, check_interval=30, timestamp_column='timestamp', tracking_table=None, tracking_id=None):
     conn = psycopg2.connect(
         dbname=dbname,
         user=user,
@@ -14,8 +14,39 @@ def main(table_name, columns, dbname='qdb', user='admin', host='127.0.0.1', port
     cur = conn.cursor()
     
     # Initial query to get the latest transaction ID and structure version
-    cur.execute(f"SELECT sequencerTxn, structureVersion FROM wal_transactions('{table_name}') ORDER BY sequencerTxn DESC LIMIT 1")
-    latest_txn_id, latest_structure_version = cur.fetchone()
+    if tracking_table and tracking_id:
+        # Create tracking table if it does not exist
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {tracking_table} (
+                timestamp TIMESTAMP,
+                trackingId SYMBOL,
+                tableName SYMBOL,
+                sequencerTxn LONG
+            ) timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(timestamp, trackingId, tableName);
+        """)
+        conn.commit()
+        
+        # Get the latest transaction ID from tracking table
+        cur.execute(f"""
+            SELECT tableName, sequencerTxn
+            FROM {tracking_table}
+            WHERE trackingId = '{tracking_id}'
+            LATEST ON timestamp
+            PARTITION BY tableName;
+        """)
+        latest_txn_record = cur.fetchone()
+        
+        if latest_txn_record:
+            latest_txn_id = latest_txn_record[1]
+            cur.execute(f"SELECT structureVersion FROM wal_transactions('{table_name}') WHERE sequencerTxn = {latest_txn_id} LIMIT 1")
+            latest_structure_version = cur.fetchone()[0]
+        else:
+            cur.execute(f"SELECT sequencerTxn, structureVersion FROM wal_transactions('{table_name}') ORDER BY sequencerTxn DESC LIMIT 1")
+            latest_txn_id, latest_structure_version = cur.fetchone()
+    else:
+        cur.execute(f"SELECT sequencerTxn, structureVersion FROM wal_transactions('{table_name}') ORDER BY sequencerTxn DESC LIMIT 1")
+        latest_txn_id, latest_structure_version = cur.fetchone()
+    
     print(f"Starting from transaction ID: {latest_txn_id} with structure version: {latest_structure_version}")
 
     while True:
@@ -86,6 +117,15 @@ def main(table_name, columns, dbname='qdb', user='admin', host='127.0.0.1', port
         # Update the latest transaction ID
         latest_txn_id = new_transactions[-1][0]
 
+        # Update tracking table with the latest transaction
+        if tracking_table and tracking_id:
+            timestamp_now = time.strftime('%Y-%m-%dT%H:%M:%S')
+            cur.execute(f"""
+                INSERT INTO {tracking_table} (timestamp, trackingId, tableName, sequencerTxn)
+                VALUES ('{timestamp_now}', '{tracking_id}', '{table_name}', {latest_txn_id})
+            """)
+            conn.commit()
+
     cur.close()
     conn.close()
 
@@ -101,8 +141,10 @@ if __name__ == "__main__":
     parser.add_argument('--host', default='127.0.0.1', help='The database host.')
     parser.add_argument('--port', type=int, default=8812, help='The database port.')
     parser.add_argument('--password', default='quest', help='The database password.')
+    parser.add_argument('--tracking_table', help='The name of the tracking table.')
+    parser.add_argument('--tracking_id', help='The tracking ID for this run.')
 
     args = parser.parse_args()
 
-    main(args.table_name, args.columns, args.dbname, args.user, args.host, args.port, args.password, args.row_threshold, args.check_interval, args.timestamp_column)
+    main(args.table_name, args.columns, args.dbname, args.user, args.host, args.port, args.password, args.row_threshold, args.check_interval, args.timestamp_column, args.tracking_table, args.tracking_id)
 
